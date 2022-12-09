@@ -1,0 +1,2 @@
+all -O3 -DNDEBUG
+result -static -l:libncursesw.a -l:libtinfo.a
