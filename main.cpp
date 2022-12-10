@@ -53,20 +53,28 @@ struct Action {
 const s32 board_size = 3, line_size = 3;
 struct TTT_Board {	
 	Cell cells[board_size][board_size];
-	TTT_State state = TTT_State::X_STEP;
-	u32 placed = 0;
+	TTT_State state;
+	u32 placed;
 
 	std::stack<Action> history;
 
 	Cell& at(ivec2 pos) {
 		return cells[pos.y][pos.x];
 	}
-	TTT_Board() {
+
+	void reset() {
 		for(u32 y = 0; y < board_size; y++) {
 			for(u32 x = 0; x < board_size; x++) {
 				cells[y][x] = Cells::NONE;
 			}			
 		}
+		placed = 0;
+		state = TTT_State::X_STEP;
+		history = {};
+	}
+
+	TTT_Board() {
+		reset();
 	}
 	s32 get_val() {
 		//search only near to last placed sign
@@ -137,6 +145,10 @@ struct TTT_Board {
 		placed--;
 	}
 	void undo() {
+		if(history.empty()) {
+			log_text = "can't undo!";
+			return;
+		}
 		Action a = history.top();
 		history.pop();
 		undo(a);
@@ -148,19 +160,11 @@ struct TTT_Board {
 		} else {
 			return {false, {}};
 		}
-	}
-	
+	}	
 };
 s32 clamp(s32 x, s32 a, s32 b) {
 	return x < a ? a : x > b ? b : x;
 }
-
-enum class TTT_UI_Message {
-	NONE,
-	X_WIN,
-	O_WIN,
-	DRAW
-};
 
 struct TTT_Board_UI {
 	TTT_Board board;
@@ -170,24 +174,13 @@ struct TTT_Board_UI {
 		cursor.x = clamp(cursor.x, 0, board_size - 1);
 		cursor.y = clamp(cursor.y, 0, board_size - 1);
 	}
-	TTT_UI_Message click() {
+	void click() {
 		auto [ok, action] = board.get_step(cursor);
 		log_text = "(1)";
-		auto msg = TTT_UI_Message::NONE;
 		if(ok) {
 			log_text = "(2)";
 			board.apply(action);
-			msg = 
-				board.state == TTT_State::X_LOSE ?
-					TTT_UI_Message::O_WIN
-				: board.state == TTT_State::O_LOSE ?
-					TTT_UI_Message::X_WIN
-				: board.state == TTT_State::DRAW ?
-					TTT_UI_Message::DRAW
-				:
-					TTT_UI_Message::NONE;
 		}
-		return msg;
 	}
 };
 void draw_board(TTT_Board_UI* board_ui, WINDOW* visual_board) {
@@ -251,8 +244,6 @@ int main() {
 
 	keypad(ttt_win, true);
 
-	bool is_fin = false;
-
 	s32 input = -1;
 	while(1) {
 		mvwprintw(log_win, 1, 1, "winsize.x  = %4d", max_size.x);
@@ -262,38 +253,54 @@ int main() {
 		mvwprintw(log_win, 5, 1, "input code = %4d", input);
 		clear_line(log_win, 6, 30);
 		mvwprintw(log_win, 6, 1, "%s", log_text.c_str());
+
 		draw_board(&ttt_board_ui, ttt_win);
+
+		{
+			auto s = ttt_board_ui.board.state;
+			const char* msg_str = 
+				s == TTT_State::O_LOSE ?
+					"crosses won!"
+				: s == TTT_State::X_LOSE ?
+					"zeros won!"
+				: s == TTT_State::DRAW ? 
+					"draw!"
+				: s == TTT_State::X_STEP ?
+					"crosses step"
+				:
+					"zeros step";
+			clear_line(end_win, 2, win_board_size + 10);
+			mvwprintw(end_win, 2, 2, "%s", msg_str);
+		}
 
 		refresh();
 		wrefresh(log_win);
 		wrefresh(ttt_win);
-		if(is_fin) wrefresh(end_win);
+		wrefresh(end_win);
 
 		input = wgetch(ttt_win);
-		if(input == 27) break;
-		if(input == 10) {
-			auto msg = ttt_board_ui.click();
-			if(msg != TTT_UI_Message::NONE) {
-				const char* msg_str = 
-					msg == TTT_UI_Message::X_WIN ?
-						"crosses won!"
-					: msg == TTT_UI_Message::O_WIN ?
-						"crosses won!"
-					:
-						"draw!";
-				mvwprintw(end_win, 2, 2, "%s", msg_str);
-				is_fin = true;
-			}
+		if(input == 27) {
+			break; 
+		} else if(input == 10) {
+			ttt_board_ui.click();
+		} else if(input == 'R' || input == 'r') {
+			ttt_board_ui.board.reset();
+		} else if (input == 'U' || input == 'u') {
+			ttt_board_ui.board.undo();
+		} else {
+			ivec2 delta = 
+				input == KEY_UP    ? ivec2{ 0, -1} :
+				input == KEY_DOWN  ? ivec2{ 0,  1} :
+				input == KEY_LEFT  ? ivec2{-1,  0} :
+				input == KEY_RIGHT ? ivec2{ 1,  0} :
+				ivec2{0, 0};
+				ttt_board_ui.move_cursor(delta);
 		}
-		ivec2 delta = 
-			input == KEY_UP    ? ivec2{ 0, -1} :
-			input == KEY_DOWN  ? ivec2{ 0,  1} :
-			input == KEY_LEFT  ? ivec2{-1,  0} :
-			input == KEY_RIGHT ? ivec2{ 1,  0} :
-			ivec2{0, 0};
-
-		ttt_board_ui.move_cursor(delta);
 	}
+
+	delwin(log_win);
+	delwin(ttt_win);
+	delwin(end_win);
 
 	endwin();
 	return 0;
