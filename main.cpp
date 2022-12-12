@@ -48,8 +48,8 @@ enum class TTT_State {
 	DRAW
 };
 struct Action {
-	ivec2 pos;
-	Cell symbol;
+	ivec2 pos = {0, 0};
+	Cell symbol = Cells::NONE;
 };
 const s32 board_size = 3, line_size = 3;
 struct TTT_Board {	
@@ -131,9 +131,6 @@ struct TTT_Board {
 		} else if(placed == board_size * board_size) {
 			state = TTT_State::DRAW;
 		}
-
-		log_text = "find_val() = " + std::to_string(value);
-
 		history.push(a);
 	}
 	void undo(Action a) {
@@ -185,21 +182,26 @@ struct TTT_Board {
 	bool is_final() {
 		return state != TTT_State::X_STEP && state != TTT_State::O_STEP;
 	}
-	s32 find_val_recursive(u32 depth) {
+	std::pair<s32, Action> find_val_and_best_step(u32 depth) {
 		//TODO alpha-beta, cache
 		if(depth == 0 || is_final()) {
-			return value;
+			return {value, {}};
 		} else {
 			auto steps = get_all_steps();
+			log_text = "(s = " + std::to_string(steps.size()) + ") ";
 			Action best;
 			s32 best_val = 2;
 			for(auto s : steps) {
 				apply(s);
-				s32 val = find_val_recursive(depth - 1);
-				if(val < best_val) best_val = val;
+				s32 val = find_val_and_best_step(depth - 1).first;
+				log_text += std::to_string(val) + " ";
+				if(val < best_val) {
+					best_val = val;
+					best = s;
+				}
 				undo();
 			}
-			return -best_val;
+			return {-best_val, best};
 		}
 	}
 };
@@ -328,6 +330,10 @@ int main() {
 			ttt_board_ui.board.reset();
 		} else if (input == 'U' || input == 'u') {
 			ttt_board_ui.board.undo();
+		} else if(input == 'a' || input == 'A' && !ttt_board_ui.board.is_final()) {			
+			auto [val, act] = ttt_board_ui.board.find_val_and_best_step(10);
+			ttt_board_ui.board.apply(act);
+			// log_text = "Ai:";
 		} else {
 			ivec2 delta = 
 				input == KEY_UP    ? ivec2{ 0, -1} :
