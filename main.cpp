@@ -5,6 +5,7 @@
 #include <ncurses.h>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 typedef uint8_t u8;
 typedef int32_t s32;
@@ -55,6 +56,7 @@ struct TTT_Board {
 	Cell cells[board_size][board_size];
 	TTT_State state;
 	u32 placed;
+	s32 value = 0;
 
 	std::stack<Action> history;
 
@@ -76,63 +78,62 @@ struct TTT_Board {
 	TTT_Board() {
 		reset();
 	}
-	s32 get_val() {
-		//search only near to last placed sign
+	s32 find_val() {
+		// TODO search only near to last placed sign
 
+		Cell c = (state == TTT_State::X_STEP) ? Cells::O : Cells::X;
+		// searching only for enemy
 		// hor
 		for(u32 y0 = 0; y0 < board_size; y0++) {
 			for(u32 x0 = 0; x0 < board_size - line_size + 1; x0++) {				
 				bool ok = true;
-				for(u32 dx = 0; dx < line_size - 1; dx++) {
-					if(cells[y0][x0 + dx] == Cells::NONE || cells[y0][x0 + dx] != cells[y0][x0 + dx + 1]) {
+				for(u32 di = 0; di < line_size; di++) {
+					if(cells[y0][x0 + di] != c) {
 						ok = false; break;
 					}
 				}
-				if(ok) return cells[y0][x0] == Cells::X ? 1 : -1;
+				if(ok) return -1;
 			}
 		}
 		// vert
 		for(u32 y0 = 0; y0 < board_size - line_size + 1; y0++) {
 			for(u32 x0 = 0; x0 < board_size; x0++) {				
 				bool ok = true;
-				for(u32 dy = 0; dy < line_size - 1; dy++) {
-					if(cells[y0 + dy][x0] == Cells::NONE || cells[y0 + dy][x0] != cells[y0 + dy + 1][x0]) {
+				for(u32 di = 0; di < line_size; di++) {
+					if(cells[y0 + di][x0] != c) {
 						ok = false; break;
 					}
 				}
-				if(ok) return cells[y0][x0] == Cells::X ? 1 : -1;
+				if(ok) return -1;
 			}
 		}
 		// diagonal
 		for(u32 y0 = 0; y0 < board_size - line_size + 1; y0++) {
 			for(u32 x0 = 0; x0 < board_size - line_size + 1; x0++) {				
 				bool ok = true;
-				for(u32 di = 0; di < line_size - 1; di++) {
-					if(cells[y0 + di][x0 + di] == Cells::NONE || cells[y0 + di][x0 + di] != cells[y0 + di + 1][x0 + di + 1]) {
+				for(u32 di = 0; di < line_size; di++) {
+					if(cells[y0 + di][x0 + di] != c) {
 						ok = false; break;
 					}
 				}
-				if(ok) return cells[y0][x0] == Cells::X ? 1 : -1;
+				if(ok) return -1;
 			}
 		}
 		return 0;
 	}
 	void apply(Action a) {
-		cells[a.pos.y][a.pos.x] = a.symbol;
-		s32 val = get_val();
-		log_text = "get_val() = " + std::to_string(val);
-		state = 
-			placed == board_size * board_size ? 
-				TTT_State::DRAW
-			: val > 0 ?
-				TTT_State::O_LOSE
-			: val < 0 ?
-				TTT_State::X_LOSE
-			: state == TTT_State::X_STEP ?
-				TTT_State::O_STEP
-			: 
-				TTT_State::X_STEP;
-		placed++;
+		cells[a.pos.y][a.pos.x] = a.symbol;	placed++;
+		state = (state == TTT_State::O_STEP) ? TTT_State::X_STEP : TTT_State::O_STEP;
+
+		value = find_val();
+		if(value < 0) {
+			state = (state == TTT_State::O_STEP) ? TTT_State::O_LOSE : TTT_State::X_LOSE;
+		} else if(placed == board_size * board_size) {
+			state = TTT_State::DRAW;
+		}
+
+		log_text = "find_val() = " + std::to_string(value);
+
 		history.push(a);
 	}
 	void undo(Action a) {
@@ -143,6 +144,7 @@ struct TTT_Board {
 			:
 				TTT_State::X_STEP;
 		placed--;
+		value = 0;
 	}
 	void undo() {
 		if(history.empty()) {
@@ -155,12 +157,51 @@ struct TTT_Board {
 	}
 	// should return Step / []Action
 	std::pair<bool, Action> get_step(ivec2 pos) {
-		if(at(pos) == Cells::NONE && (state == TTT_State::X_STEP || state == TTT_State::O_STEP)) {
+		if(at(pos) == Cells::NONE && !is_final()) {
 			return {true, {pos, state == TTT_State::X_STEP ? Cells::X : Cells::O}};
 		} else {
 			return {false, {}};
 		}
 	}	
+	std::vector<Action> get_all_steps() {
+		std::vector<Action> result;
+		Cell symbol;
+		if(state == TTT_State::X_STEP) {
+			symbol = Cells::X;
+		} else if(state == TTT_State::O_STEP) {
+			symbol = Cells::O;
+		} else {
+			return {};
+		}
+		for(s32 y = 0; y < board_size; y++) {
+			for(s32 x = 0; x < board_size; x++) {
+				if(cells[y][x] == Cells::NONE) {
+					result.push_back(Action{{x, y}, symbol});
+				}
+			}
+		}
+		return result;
+	}
+	bool is_final() {
+		return state != TTT_State::X_STEP && state != TTT_State::O_STEP;
+	}
+	s32 find_val_recursive(u32 depth) {
+		//TODO alpha-beta, cache
+		if(depth == 0 || is_final()) {
+			return value;
+		} else {
+			auto steps = get_all_steps();
+			Action best;
+			s32 best_val = 2;
+			for(auto s : steps) {
+				apply(s);
+				s32 val = find_val_recursive(depth - 1);
+				if(val < best_val) best_val = val;
+				undo();
+			}
+			return -best_val;
+		}
+	}
 };
 s32 clamp(s32 x, s32 a, s32 b) {
 	return x < a ? a : x > b ? b : x;
