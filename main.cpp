@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <cmath>
+#include <unistd.h>
+
 
 typedef uint8_t u8;
 typedef int32_t s32;
@@ -52,14 +55,17 @@ struct Action {
 	ivec2 pos = {0, 0};
 	Cell symbol = Cells::NONE;
 };
-const s32 board_size = 10, line_size = 5;
+
+const s32 board_size = 5, line_size = 4;
+const float lose_val = 1.e9f, inf = 1.e12f;
 struct TTT_Board {	
 	Cell cells[board_size][board_size];
 	TTT_State state;
 	u32 placed;
-	float value = 0.;
+	float value;
 
 	std::stack<Action> history;
+
 
 	Cell& at(ivec2 pos) {
 		return cells[pos.y][pos.x];
@@ -80,65 +86,113 @@ struct TTT_Board {
 	TTT_Board() {
 		reset();
 	}
+	TTT_Board(Cell* origin) {
+		placed = 0, state = TTT_State::X_STEP, history = {};
+		for(u32 y = 0, i = 0; y < board_size; y++) {
+			for(u32 x = 0; x < board_size; x++, i++) {
+				Cell c = origin[i];
+				cells[y][x] = c;
+				if(c == Cells::NONE) placed++;
+			}			
+		}
+		value = find_val();
+		printf("value = %f\n", value);
+	}
 
-	// static float seq_cost(u32 l) {
-	// 	return l >= line_size ? 1.e9 : l * l;
-	// }
-	// float find_val_part(Cell cell) {
-	// 	for()
-	// }
+	static float seq_cost(u32 l) {
+		// if(l) log_text += std::to_string(l) + " ";
+		// printf("[%d]", l);
+		return l >= line_size ? lose_val * 2.f : 0.f;
+		// return l >= line_size ? lose_val * 2.f : l <= 1 ? 0 : (float)((l - 1) * (l - 1));
+	}
+	static float cell_cost(s32 ix, s32 iy) {
+		float x = ix - .5f * (board_size - 1), y = iy - .5f * (board_size - 1);
+		return (sqrtf(2.f) * (board_size - 1) - sqrtf(x * x + y * y)) * .1;
+	}
+	float find_val_part(Cell c) {
+		float result = 0.;
+		u32 l = 0;
+
+		auto apply = [&result, &l] (bool nl = false) {
+				result += seq_cost(l);
+				// printf("[%d]", l);
+				l = 0;
+				// if(nl) puts("");
+ 		};
+		auto update_result = [this, c, &result, &l, &apply] (u32 y, u32 x) {
+			// printf("(%d %d) ", x, y);
+			if(cells[y][x] == c) {
+				result += cell_cost(x, y);
+				++l;
+			} else {
+				apply();
+			}
+		};
+
+		// horisontal
+		for(u32 y = 0; y < board_size; ++y) {
+			l = 0;
+			for(u32 x = 0; x < board_size; ++x) {				
+				update_result(y, x);
+			}
+			apply(1);
+		}
+
+		// vertical
+		for(u32 x = 0; x < board_size; ++x) {
+			l = 0;
+			for(u32 y = 0; y < board_size; ++y) {				
+				update_result(y, x);
+			}
+			apply(1);
+		}
+
+		// diagonal LT-RB
+		for(u32 x0 = 0; x0 < board_size - line_size + 1; ++x0) {
+			l = 0;
+			for(u32 i = 0; i < board_size - x0; ++i) {
+				update_result(i, x0 + i);
+			}
+			apply(1);
+		}
+
+		for(u32 y0 = 1; y0 < board_size - line_size + 1; ++y0) {
+			l = 0;
+			for(u32 i = 0; i < board_size - y0; ++i) {
+				update_result(y0 + i, i);
+			}
+			apply(1);
+		}
+	
+		//diagonal RT-LB
+		for(u32 x0 = line_size - 1; x0 < board_size; ++x0) {
+			l = 0;
+			for(u32 i = 0; i <= x0; ++i) {
+				update_result(x0 - i, i);
+			}
+			apply(1);
+		}
+
+		for(u32 y0 = 1; y0 < board_size - line_size + 1; ++y0) {
+			l = 0;
+			for(u32 i = 0; i < board_size - y0; ++i) {
+				update_result(y0 + i,  board_size - i - 1);
+			}
+			apply(1);
+		}
+
+		return result;
+	}
 	float find_val() {
-		// -> float
-		// sum of (line_length_i^2) - same for crosses
-		// +-inf, if there are line_legth_i >= line_size
-		// TODO search only near to last placed sign
-
-		Cell c = (state == TTT_State::X_STEP) ? Cells::O : Cells::X;
-		// searching only for enemy
-		// hor
-		for(u32 y0 = 0; y0 < board_size; y0++) {
-			for(u32 x0 = 0; x0 < board_size - line_size + 1; x0++) {				
-				bool ok = true;
-				for(u32 di = 0; di < line_size; di++) {
-					if(cells[y0][x0 + di] != c) {
-						ok = false; break;
-					}
-				}
-				if(ok) return -1.;
-			}
-		}
-		// vert
-		for(u32 y0 = 0; y0 < board_size - line_size + 1; y0++) {
-			for(u32 x0 = 0; x0 < board_size; x0++) {				
-				bool ok = true;
-				for(u32 di = 0; di < line_size; di++) {
-					if(cells[y0 + di][x0] != c) {
-						ok = false; break;
-					}
-				}
-				if(ok) return -1;
-			}
-		}
-		// diagonal
-		for(u32 y0 = 0; y0 < board_size - line_size + 1; y0++) {
-			for(u32 x0 = 0; x0 < board_size - line_size + 1; x0++) {				
-				bool ok = true;
-				for(u32 di = 0; di < line_size; di++) {
-					if(cells[y0 + di][x0 + di] != c) {
-						ok = false; break;
-					}
-				}
-				if(ok) return -1;
-			}
-		}
-		return 0;
+		float result = find_val_part(Cells::X) - find_val_part(Cells::O);
+		return result * (state == TTT_State::X_STEP || state == TTT_State::X_DRAW || state == TTT_State::X_LOSE ? 1.f : -1.f); 
 	}
 	void apply(Action a) {
 		cells[a.pos.y][a.pos.x] = a.symbol;	placed++;
 		state = (state == TTT_State::O_STEP) ? TTT_State::X_STEP : TTT_State::O_STEP;
 
 		value = find_val();
-		if(value < 0) {
+		if(value < -lose_val) {
 			state = (state == TTT_State::O_STEP) ? TTT_State::O_LOSE : TTT_State::X_LOSE;
 		} else if(placed == board_size * board_size) {
 			state = (state == TTT_State::O_STEP) ? TTT_State::O_DRAW : TTT_State::X_DRAW;
@@ -195,26 +249,23 @@ struct TTT_Board {
 	bool is_final() {
 		return state != TTT_State::X_STEP && state != TTT_State::O_STEP;
 	}
+
 	std::pair<float, Action> find_val_and_best_step(u32 depth) {
-		//TODO alpha-beta, cache
 		if(depth == 0 || is_final()) {
 			return {value, {}};
 		} else {
 			auto steps = get_all_steps();
-			// log_text = "(s = " + std::to_string(steps.size()) + ") ";
 			Action best;
-			float best_val = -1.e10;
+			float best_val = -inf;
 			for(auto s : steps) {
 				apply(s);
 				float val = -find_val_and_best_step(depth - 1).first;
-				log_text += std::to_string(val) + " ";
-				if(val > best_val) {
+				if(val >= best_val) {
 					best_val = val;
 					best = s;
 				}
 				undo();
 			}
-			// log_text = " -> " + std::to_string(steps.size());
 			return {best_val, best};
 		}
 		log_text = "invalid state!";
@@ -222,6 +273,10 @@ struct TTT_Board {
 };
 s32 clamp(s32 x, s32 a, s32 b) {
 	return x < a ? a : x > b ? b : x;
+}
+
+void draw(TTT_Board* board) {
+	//
 }
 
 struct TTT_Board_UI {
@@ -238,6 +293,14 @@ struct TTT_Board_UI {
 			board.apply(action);
 		}
 		return ok;
+	}
+	void click_debug() {
+		Cell c1 = board.cells[cursor.y][cursor.x];
+		Cell c2 = (c1 + 1) % 3;
+		board.cells[cursor.y][cursor.x] = c2;
+		board.placed += !!c2 - !!c1;
+		board.value = board.find_val();
+		log_text = "value = " + std::to_string(board.value);
 	}
 };
 void draw_board(TTT_Board_UI* board_ui, WINDOW* visual_board) {
@@ -262,6 +325,7 @@ void draw_board(TTT_Board_UI* board_ui, WINDOW* visual_board) {
 		}			
 	}	
 }
+
 void init_ncurses() {
 	initscr();
 	cbreak();
@@ -282,8 +346,35 @@ void clear_line(WINDOW *win, u32 row, u32 length) {
 	wmove(win, row, 1);
 	for(u32 i = 0; i < length - 2; i++) { waddch(win, ' '); }
 }
+void draw_all_next_states(TTT_Board_UI* board_ui, WINDOW* visual_board, WINDOW* log_win, u32 depth) {
+	auto draw = [&board_ui, &visual_board, &log_win] () {
+		draw_board(board_ui, visual_board);
+		float val = board_ui->board.value;
+		log_text = "value = " + std::to_string(val);
+		clear_line(log_win, 6, 30);
+		mvwprintw(log_win, 6, 1, "%s", log_text.c_str());
+		wrefresh(visual_board);
+		wrefresh(log_win);
+		usleep(val > lose_val || val < -lose_val ? 200000 : 100);
+	};
 
-int main() {
+	if(depth && !board_ui->board.is_final()) {
+		auto steps = board_ui->board.get_all_steps();
+		for(auto s : steps) {			
+			draw();
+			board_ui->board.apply(s);
+			draw();
+			draw_all_next_states(board_ui, visual_board, log_win, depth - 1);
+			board_ui->board.undo();
+		}
+		draw();
+	} else {
+		draw();
+	}
+}
+
+
+void main_0() {
 	init_ncurses();
 
 	ivec2 max_size;
@@ -338,17 +429,23 @@ int main() {
 		wrefresh(end_win);
 
 		input = wgetch(ttt_win);
+		// usleep(1 000 000);
+		
 		if(input == 27) {
 			break; 
 		} else if(input == 10) {
-			auto [] = ttt_board_ui.click();
-					log_text = "value = " + std::to_string(ttt_board_ui.board.find_val_and_best_step(2).first);
+			bool ok = ttt_board_ui.click();
+			if(ok) log_text = "value = " + std::to_string(ttt_board_ui.board.find_val_and_best_step(0).first);
+		} else if(input == 'D' || input == 'd') {
+			ttt_board_ui.click_debug();
+		} else if(input == 's' || input == 'S') {
+			draw_all_next_states(&ttt_board_ui, ttt_win, log_win, 3);
 		} else if(input == 'R' || input == 'r') {
 			ttt_board_ui.board.reset();
 		} else if (input == 'U' || input == 'u') {
 			ttt_board_ui.board.undo();
 		} else if(input == 'a' || input == 'A' && !ttt_board_ui.board.is_final()) {			
-			auto [val, act] = ttt_board_ui.board.find_val_and_best_step(3);
+			auto [val, act] = ttt_board_ui.board.find_val_and_best_step(5);
 			ttt_board_ui.board.apply(act);
 			// log_text = "Ai:";
 		} else {
@@ -367,5 +464,23 @@ int main() {
 	delwin(end_win);
 
 	endwin();
+}
+
+int main() {
+	// {
+	// 	using namespace Cells;
+	// 	Cell src[] = {
+	// 		   O,    O, NONE, NONE,
+	// 		NONE,    X, NONE, NONE,
+	// 		NONE,    X, NONE, NONE,
+	// 		NONE,    X, NONE, NONE
+	// 	};
+	// 	TTT_Board board(src);
+	// 	// board.find_val_and_best_step(1);
+	// }
+
+	main_0();
+
 	return 0;
 }
+
